@@ -1,4 +1,4 @@
-package com.sarveshroshan.algotrader
+package com.sarveshroshan.algotraderapp
 
 import android.app.Application
 import android.content.res.Configuration

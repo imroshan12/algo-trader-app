@@ -8,10 +8,10 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.sarveshroshan.algotrader"
+      "bundleIdentifier": "com.sarveshroshan.algotraderapp"
     },
     "android": {
-      "package": "com.sarveshroshan.algotrader",
+      "package": "com.sarveshroshan.algotraderapp",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
