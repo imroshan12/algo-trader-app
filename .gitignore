@@ -80,3 +80,6 @@ android/local.properties
 # Google service configs (not used today; guard against a future addition)
 google-services.json
 GoogleService-Info.plist
+
+# EAS
+.easignore
