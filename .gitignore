@@ -36,6 +36,47 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-# generated native folders
-/ios
-/android
+
+# credentials — belt and braces. The app stores its token in the device
+# keychain and never writes it to disk, but never let one in by accident.
+.env
+*.token
+secrets.json
+
+# ── Native projects are tracked (Xcode Cloud needs the scheme in git) ──
+# but everything generated, machine-specific or credential-bearing is not.
+
+# Dependency trees — reinstalled by CI, 600MB+ locally
+ios/Pods/
+
+# Build output
+ios/build/
+ios/DerivedData/
+android/build/
+android/app/build/
+android/.gradle/
+android/.cxx/
+
+# Machine-specific: absolute paths that break on any other machine
+ios/.xcode.env.local
+android/local.properties
+
+# Per-user Xcode state (window layout, breakpoints, unshared schemes)
+**/xcuserdata/
+*.xcuserstate
+
+# Signing material — never track any of it, including debug keystores.
+# The RN debug keystore is a well-known public key, but it regenerates
+# automatically and there is no reason to carry key material in a repo.
+*.keystore
+*.jks
+*.p12
+*.p8
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+
+# Google service configs (not used today; guard against a future addition)
+google-services.json
+GoogleService-Info.plist

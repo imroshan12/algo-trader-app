@@ -8,6 +8,8 @@
  * per refresh.
  */
 
+import { decode as decodeBase64 } from 'js-base64';
+
 import { SleeveState } from '../types';
 
 const API_ROOT = 'https://api.github.com';
@@ -80,13 +82,33 @@ async function request(
   return res;
 }
 
+/** Shape GitHub returns when it serves the default JSON representation. */
+interface ContentsEnvelope {
+  content?: string;
+  encoding?: string;
+}
+
+function looksLikeEnvelope(v: unknown): v is ContentsEnvelope {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as ContentsEnvelope).content === 'string' &&
+    (v as ContentsEnvelope).encoding === 'base64'
+  );
+}
+
 /**
  * Fetch a file's contents.
  *
- * Uses the `raw` media type so GitHub returns the file body directly. The
- * default JSON representation base64-encodes the content, which would force us
- * to decode it by hand — React Native has no `atob`, and a hand-rolled decoder
- * mangles any non-ASCII byte. Asking for raw sidesteps that entirely.
+ * We ask for the `raw` media type, which makes GitHub return the file body
+ * directly. But media-type handling is not something to bet on: if the header
+ * is not honoured, GitHub serves its default representation instead, which
+ * wraps the file in an envelope and base64-encodes it. Both shapes are handled
+ * here so a change on GitHub's side cannot silently break the app.
+ *
+ * Decoding uses `js-base64` rather than a hand-rolled decoder. React Native has
+ * no `atob`, and decoding by hand with `String.fromCharCode` corrupts any
+ * multi-byte character.
  */
 export async function fetchSleeveState(
   token: string,
@@ -94,13 +116,54 @@ export async function fetchSleeveState(
   repo: RepoRef = DEFAULT_REPO,
 ): Promise<SleeveState> {
   const url = `${API_ROOT}/repos/${repo.owner}/${repo.repo}/contents/${path}?ref=${repo.branch}`;
-  const res = await request(token, url, 'application/vnd.github.raw', path);
+  const res = await request(token, url, 'application/vnd.github.raw+json', path);
   const body = await res.text();
+
+  let parsed: unknown;
   try {
-    return JSON.parse(body) as SleeveState;
+    parsed = JSON.parse(body);
   } catch {
-    throw new GitHubError(`${path} is not valid JSON.`);
+    // Surface what actually arrived — "not valid JSON" alone says nothing.
+    const head = body.slice(0, 120).replace(/\s+/g, ' ').trim();
+    throw new GitHubError(
+      `${path} did not return JSON. GitHub sent: ${head || '(empty response)'}`,
+    );
   }
+
+  // Default representation: unwrap and decode.
+  if (looksLikeEnvelope(parsed)) {
+    try {
+      parsed = JSON.parse(decodeBase64(parsed.content!));
+    } catch {
+      throw new GitHubError(
+        `${path} is base64-wrapped but its contents are not valid JSON.`,
+      );
+    }
+  }
+
+  assertSleeveState(parsed, path);
+  return parsed;
+}
+
+/**
+ * Guard against silently rendering the wrong object.
+ *
+ * Without this, an unexpected response that happens to be valid JSON would be
+ * cast to SleeveState, every field would read as undefined, and the app would
+ * cheerfully display a flat, wrong portfolio. Failing loudly is better.
+ */
+function assertSleeveState(v: unknown, path: string): asserts v is SleeveState {
+  const bad = (why: string) =>
+    new GitHubError(`${path} is not a portfolio state file — ${why}.`);
+
+  if (typeof v !== 'object' || v === null) throw bad('expected an object');
+  const o = v as Record<string, unknown>;
+
+  if (typeof o.cash !== 'number') throw bad('missing a numeric "cash" field');
+  if (typeof o.positions !== 'object' || o.positions === null) {
+    throw bad('missing a "positions" object');
+  }
+  if (!Array.isArray(o.equity_curve)) throw bad('missing an "equity_curve" array');
 }
 
 /** Cheap probe used by the setup screen to validate a token before storing it. */

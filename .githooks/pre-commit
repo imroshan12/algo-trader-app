@@ -1,0 +1,46 @@
+#!/bin/sh
+#
+# Guards a public repository that authenticates against a private one.
+# Blocks two classes of mistake: committed tokens, and committed key material.
+#
+# Enabled with:  git config core.hooksPath .githooks
+# Bypass (only when certain it is a false positive):  git commit --no-verify
+
+fail=0
+
+# 1. Token-shaped strings in the diff
+TOKEN_RE='gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}'
+if git diff --cached -U0 | grep -qE "$TOKEN_RE"; then
+  echo
+  echo "  ✖ Blocked: staged changes look like they contain a GitHub token."
+  git diff --cached -U0 | grep -nE "$TOKEN_RE" | sed 's/^/      /'
+  fail=1
+fi
+
+# 2. Key material by extension, whatever the path
+KEY_RE='\.(keystore|jks|p12|p8|cer|certSigningRequest|mobileprovision|provisionprofile|pem)$'
+KEYS=$(git diff --cached --name-only --diff-filter=A | grep -E "$KEY_RE" || true)
+if [ -n "$KEYS" ]; then
+  echo
+  echo "  ✖ Blocked: staged changes add signing/key material."
+  echo "$KEYS" | sed 's/^/      /'
+  fail=1
+fi
+
+# 3. Machine-specific files that break other machines
+LOCAL_RE='(\.xcode\.env\.local|android/local\.properties)$'
+LOCALS=$(git diff --cached --name-only --diff-filter=A | grep -E "$LOCAL_RE" || true)
+if [ -n "$LOCALS" ]; then
+  echo
+  echo "  ✖ Blocked: staged changes add machine-specific paths."
+  echo "$LOCALS" | sed 's/^/      /'
+  fail=1
+fi
+
+if [ "$fail" -eq 1 ]; then
+  echo
+  echo "    Remove them, then commit again. If genuinely a false positive:"
+  echo "      git commit --no-verify"
+  echo
+  exit 1
+fi
