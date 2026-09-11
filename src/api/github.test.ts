@@ -109,3 +109,38 @@ describe('fetchSleeveState — failure modes', () => {
     await expect(fetchSleeveState('tok', 'p.json')).rejects.toThrow(/No network connection/);
   });
 });
+
+// ── Cancellation and auth classification ──
+
+import { isAbortError, verifyAccess } from './github';
+
+describe('request lifecycle', () => {
+  it('rethrows a caller abort untouched, so it can be ignored', async () => {
+    const abort = Object.assign(new Error('Aborted'), { name: 'AbortError' });
+    global.fetch = jest.fn().mockRejectedValue(abort) as unknown as typeof fetch;
+    const controller = new AbortController();
+    controller.abort();
+
+    const err = await fetchSleeveState(
+      'tok', 'state/portfolio.json', undefined, controller.signal,
+    ).catch((e) => e);
+    expect(isAbortError(err)).toBe(true);
+    // Specifically not converted into a user-facing GitHubError.
+    expect(err).not.toBeInstanceOf(GitHubError);
+  });
+
+  it('marks 401 and 403 as token problems, and 404 as not', async () => {
+    for (const [status, isAuth] of [[401, true], [403, true], [404, false]] as const) {
+      mockResponse('{}', false, status);
+      const err = await fetchSleeveState('tok', 'x.json').catch((e) => e);
+      expect(err).toBeInstanceOf(GitHubError);
+      expect(err.isAuth).toBe(isAuth);
+    }
+  });
+
+  it('verifyAccess reports a message rather than throwing', async () => {
+    mockResponse('{}', false, 401);
+    const r = await verifyAccess('bad');
+    expect(r).toEqual({ ok: false, message: expect.stringMatching(/Token rejected/) });
+  });
+});

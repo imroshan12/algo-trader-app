@@ -1,49 +1,86 @@
-import React from 'react';
+/**
+ * One sleeve, summarised. The whole card opens the sleeve's detail sheet.
+ *
+ * The card answers three questions in reading order: what is it worth, what
+ * is it doing (the status chip), and how is the money split (the allocation
+ * bar). Everything else lives one tap away.
+ */
+
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Palette, mono } from '../theme';
+import { makeStyles, mono, radius, space, tabular, toneFor, type, useTheme } from '../theme';
 import { Sleeve } from '../types';
-import { rupees, signedPct, signedRupees, sleeveState, summarise, shortDate } from '../lib/format';
+import {
+  rupees, shortDate, signedPct, signedRupees, sleeveState, SleeveStateKind, summarise,
+} from '../lib/format';
+import { buildChart, curveOf } from '../lib/series';
+import EquityChart from './EquityChart';
+import { Chip, ChipTone, Tappable } from './ui';
 
-interface Props {
-  palette: Palette;
-  sleeve: Sleeve;
+/**
+ * Status colours. "Live" is deliberately neutral: green is reserved for
+ * gains, and a sleeve that holds positions while down 2% is not good news.
+ */
+export function useChipTone(kind: SleeveStateKind): ChipTone {
+  const t = useTheme();
+  switch (kind) {
+    case 'live': return { fg: t.ink, bg: t.sunk };
+    case 'pending': return { fg: t.accent, bg: t.accentSoft };
+    case 'error':
+    case 'halted': return { fg: t.loss, bg: t.lossSoft };
+    case 'idle':
+    default: return { fg: t.idle, bg: t.idleSoft };
+  }
 }
 
-export default function SleeveCard({ palette, sleeve }: Props) {
-  const s = styles(palette);
-  const summary = summarise(sleeve);
-  const state = sleeveState(sleeve, summary);
+export default function SleeveCard({ sleeve, onPress }: { sleeve: Sleeve; onPress: () => void }) {
+  const s = useStyles();
+  const t = useTheme();
+  const summary = useMemo(() => summarise(sleeve), [sleeve]);
+  const status = sleeveState(sleeve, summary);
+  const chipTone = useChipTone(status.kind);
+  const chart = useMemo(
+    () => buildChart(curveOf(sleeve.state), sleeve.capital),
+    [sleeve.state, sleeve.capital],
+  );
 
-  const tone =
-    summary.returnPct > 0 ? palette.gain
-    : summary.returnPct < 0 ? palette.loss
-    : palette.ink;
-
-  const chipStyle =
-    state.kind === 'live' ? { bg: palette.gainFill, fg: palette.gain }
-    : state.kind === 'pending' ? { bg: palette.accentSoft, fg: palette.accent }
-    : state.kind === 'error' ? { bg: palette.lossFill, fg: palette.loss }
-    : { bg: palette.idleSoft, fg: palette.idle };
-
-  const positions = sleeve.state ? Object.values(sleeve.state.positions ?? {}) : [];
-  const pending = sleeve.state?.pending_buys ?? [];
+  const tone = toneFor(t, summary.returnPct);
+  const investedShare = summary.equity > 0 ? summary.invested / summary.equity : 0;
+  const trades = sleeve.state?.trades?.length ?? 0;
 
   return (
-    <View style={s.card}>
+    <Tappable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={
+        `${sleeve.name}. ${rupees(summary.equity)}, ${signedPct(summary.returnPct)}. ${status.label}.`
+      }
+      accessibilityHint="Opens holdings, queued orders and trade history"
+      style={s.card}>
       <View style={s.head}>
         <View style={s.identity}>
           <Text style={s.name}>{sleeve.name}</Text>
           <Text style={s.rule}>{sleeve.rule}</Text>
-          <View style={[s.chip, { backgroundColor: chipStyle.bg }]}>
-            <View style={[s.dot, { backgroundColor: chipStyle.fg }]} />
-            <Text style={[s.chipText, { color: chipStyle.fg }]}>{state.label}</Text>
-          </View>
         </View>
         <View style={s.figure}>
-          <Text style={[s.amount, { color: tone }]}>{rupees(summary.equity)}</Text>
-          <Text style={[s.pct, { color: tone }]}>{signedPct(summary.returnPct)}</Text>
+          <Text style={[s.amount, { color: summary.returnPct === 0 ? t.ink : tone }]}>
+            {rupees(summary.equity)}
+          </Text>
+          <Text style={[s.pct, { color: tone === t.ink ? t.inkDim : tone }]}>
+            {signedPct(summary.returnPct)}
+            {summary.dayChange !== null && summary.dayChange !== 0
+              ? ` · ${signedRupees(summary.dayChange)} today`
+              : ''}
+          </Text>
         </View>
+      </View>
+
+      <View style={s.statusRow}>
+        <Chip tone={chipTone} label={status.label} pulse={status.kind === 'pending'} />
+        {summary.valuedOn ? (
+          <Text style={s.valued}>{shortDate(summary.valuedOn)} close</Text>
+        ) : null}
       </View>
 
       {sleeve.error ? (
@@ -52,155 +89,99 @@ export default function SleeveCard({ palette, sleeve }: Props) {
         </View>
       ) : (
         <>
-          <View style={s.strip}>
-            <Stat palette={palette} label="Cash" value={rupees(summary.cash)} />
-            <Stat palette={palette} label="Invested" value={rupees(summary.invested)} />
-            <Stat palette={palette} label="Exits" value={String(summary.exitCount)} />
-            <Stat
-              palette={palette}
-              label="Realised"
-              value={signedRupees(summary.realisedPnl)}
-              tone={summary.realisedPnl > 0 ? palette.gain
-                : summary.realisedPnl < 0 ? palette.loss : undefined}
-            />
-            <Stat palette={palette} label="Costs" value={rupees(summary.costs)} />
-            <Stat
-              palette={palette}
-              label="Running"
-              value={summary.daysRunning ? `day ${summary.daysRunning}` : '—'}
-            />
+          {chart && chart.bars.length >= 2 ? (
+            <EquityChart model={chart} height={56} />
+          ) : (
+            <View style={s.chartPending}>
+              <Text style={s.chartPendingText}>
+                {summary.valuedOn
+                  ? `First valuation on ${shortDate(summary.valuedOn)}. The chart fills in from the next session.`
+                  : 'Waiting for the first valuation.'}
+              </Text>
+            </View>
+          )}
+
+          <View style={s.alloc} accessible accessibilityLabel={
+            `${Math.round(investedShare * 100)} percent invested, ${rupees(summary.cash)} cash`
+          }>
+            <View style={s.allocTrack}>
+              <View style={[s.allocFill, { flex: investedShare, backgroundColor: t.accent }]} />
+              <View style={{ flex: Math.max(0, 1 - investedShare) }} />
+            </View>
+            <View style={s.allocLegend}>
+              <Text style={s.allocText}>
+                <Text style={s.allocFigure}>{rupees(summary.invested)}</Text> invested
+              </Text>
+              <Text style={s.allocText}>
+                <Text style={s.allocFigure}>{rupees(summary.cash)}</Text> cash
+              </Text>
+            </View>
           </View>
-
-          {positions.length > 0 && (
-            <View style={s.section}>
-              {/* The state file records what we paid, not what each name is
-                  worth now — only the portfolio total is marked to market.
-                  Label the column honestly rather than implying live prices. */}
-              <Text style={s.sectionLabel}>Holdings · at cost</Text>
-              {positions
-                .slice()
-                .sort((a, b) => b.quantity * b.entry_price - a.quantity * a.entry_price)
-                .map((p) => (
-                  <View key={p.ticker} style={s.row}>
-                    <View style={s.rowMain}>
-                      <Text style={s.ticker}>{p.ticker.replace('.NS', '')}</Text>
-                      <Text style={s.rowSub}>
-                        {p.quantity} @ {rupees(p.entry_price)} · since {shortDate(p.entry_date)}
-                      </Text>
-                    </View>
-                    <Text style={s.rowValue}>{rupees(p.quantity * p.entry_price)}</Text>
-                  </View>
-                ))}
-            </View>
-          )}
-
-          {pending.length > 0 && (
-            <View style={s.section}>
-              <Text style={s.sectionLabel}>
-                Queued · fills at next session open
-              </Text>
-              <View style={s.pills}>
-                {pending.map((q) => (
-                  <View key={q.ticker} style={s.pill}>
-                    <Text style={s.pillName}>{q.ticker.replace('.NS', '')}</Text>
-                    <Text style={s.pillPrice}>{rupees(q.reference_price, 2)}</Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          )}
-
-          {positions.length === 0 && pending.length === 0 && (
-            <View style={s.section}>
-              <Text style={s.quiet}>
-                {sleeve.key === 'momentum'
-                  ? 'The index is below its 200-day average, so this sleeve is in cash by design. It re-enters at the first monthly rebalance after the market recovers.'
-                  : 'No stock currently passes its own trend test. Capital sits in cash until one does.'}
-              </Text>
-            </View>
-          )}
         </>
       )}
-    </View>
+
+      <View style={s.foot}>
+        <Text style={s.footText}>
+          {summary.positionCount} held · {summary.pendingCount} queued · {trades} trade{trades === 1 ? '' : 's'}
+        </Text>
+        <Text style={s.chevron}>Details ›</Text>
+      </View>
+    </Tappable>
   );
 }
 
-function Stat({
-  palette, label, value, tone,
-}: { palette: Palette; label: string; value: string; tone?: string }) {
-  const s = styles(palette);
-  return (
-    <View style={s.stat}>
-      <Text style={s.statLabel}>{label}</Text>
-      <Text style={[s.statValue, tone ? { color: tone } : null]}>{value}</Text>
-    </View>
-  );
-}
+const useStyles = makeStyles((t) => ({
+  card: {
+    backgroundColor: t.surface,
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: t.ruleStrong,
+    padding: space.lg,
+    gap: space.md + 2,
+  },
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: space.md },
+  identity: { flex: 1, gap: 3 },
+  name: { fontSize: type.heading, fontWeight: '700', color: t.ink, letterSpacing: -0.2 },
+  rule: { fontSize: type.label - 0.5, color: t.inkDim },
+  figure: { alignItems: 'flex-end', gap: 3 },
+  amount: { fontFamily: mono, fontSize: 20, fontWeight: '700', letterSpacing: -0.4, ...tabular },
+  pct: { fontFamily: mono, fontSize: type.caption, fontWeight: '600', ...tabular },
 
-const styles = (p: Palette) =>
-  StyleSheet.create({
-    card: {
-      backgroundColor: p.surface, borderRadius: 10,
-      borderWidth: 1, borderColor: p.rule, overflow: 'hidden',
-    },
-    head: {
-      flexDirection: 'row', justifyContent: 'space-between',
-      alignItems: 'flex-start', gap: 14, padding: 16,
-    },
-    identity: { flex: 1, gap: 4 },
-    name: { fontSize: 17, fontWeight: '700', color: p.ink, letterSpacing: -0.2 },
-    rule: { fontSize: 12.5, color: p.inkDim },
-    chip: {
-      flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
-      paddingHorizontal: 9, paddingVertical: 4, borderRadius: 4, marginTop: 4,
-    },
-    dot: { width: 6, height: 6, borderRadius: 3 },
-    chipText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
-    figure: { alignItems: 'flex-end', gap: 2 },
-    amount: { fontFamily: mono, fontSize: 21, fontWeight: '700', letterSpacing: -0.3 },
-    pct: { fontFamily: mono, fontSize: 13, fontWeight: '600' },
+  statusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  valued: { fontSize: type.caption, color: t.inkFaint, fontWeight: '600' },
 
-    strip: {
-      flexDirection: 'row', flexWrap: 'wrap',
-      backgroundColor: p.sunk, borderTopWidth: 1, borderBottomWidth: 1, borderColor: p.rule,
-    },
-    stat: {
-      flexGrow: 1, flexBasis: '33.333%', paddingVertical: 10, paddingHorizontal: 12, gap: 2,
-    },
-    statLabel: {
-      fontSize: 10, letterSpacing: 0.7, textTransform: 'uppercase',
-      color: p.inkDim, fontWeight: '700',
-    },
-    statValue: { fontFamily: mono, fontSize: 13.5, fontWeight: '700', color: p.ink },
+  chartPending: {
+    backgroundColor: t.sunk,
+    borderRadius: radius.sm,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+  },
+  chartPendingText: { fontSize: type.caption + 0.5, lineHeight: 18, color: t.inkDim },
 
-    section: { padding: 16, gap: 10 },
-    sectionLabel: {
-      fontSize: 10.5, letterSpacing: 0.7, textTransform: 'uppercase',
-      color: p.inkDim, fontWeight: '700',
-    },
-    row: {
-      flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-      gap: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: p.rule,
-    },
-    rowMain: { flex: 1, gap: 2 },
-    ticker: { fontSize: 14.5, fontWeight: '700', color: p.ink },
-    rowSub: { fontFamily: mono, fontSize: 11.5, color: p.inkDim },
-    rowValue: { fontFamily: mono, fontSize: 14, fontWeight: '600', color: p.ink },
+  alloc: { gap: space.sm },
+  allocTrack: {
+    flexDirection: 'row',
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    backgroundColor: t.idleSoft,
+  },
+  allocFill: { borderRadius: 3 },
+  allocLegend: { flexDirection: 'row', justifyContent: 'space-between' },
+  allocText: { fontSize: type.caption, color: t.inkDim },
+  allocFigure: { fontFamily: mono, fontWeight: '700', color: t.ink, ...tabular },
 
-    pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    pill: {
-      flexDirection: 'row', alignItems: 'baseline', gap: 7,
-      backgroundColor: p.sunk, borderRadius: 5,
-      paddingHorizontal: 10, paddingVertical: 7,
-    },
-    pillName: { fontSize: 12.5, fontWeight: '700', color: p.ink },
-    pillPrice: { fontFamily: mono, fontSize: 11.5, color: p.inkDim },
+  errorBox: { padding: space.md + 2, backgroundColor: t.lossSoft, borderRadius: radius.sm },
+  errorText: { color: t.loss, fontSize: type.label + 0.5, lineHeight: 20 },
 
-    quiet: { fontSize: 13.5, lineHeight: 21, color: p.inkDim },
-    errorBox: {
-      margin: 16, marginTop: 0, padding: 14,
-      backgroundColor: p.lossFill, borderRadius: 6,
-    },
-    errorText: { color: p.loss, fontSize: 13.5, lineHeight: 20 },
-  });
+  foot: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: t.rule,
+  },
+  footText: { fontSize: type.caption, color: t.inkDim, ...tabular },
+  chevron: { fontSize: type.label, fontWeight: '700', color: t.accent },
+}));

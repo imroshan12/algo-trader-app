@@ -1,35 +1,33 @@
 {
-  "expo": {
-    "name": "AlgoTrader",
-    "slug": "AlgoTrader",
-    "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "automatic",
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.sarveshroshan.algotraderapp",
-      "buildNumber": "1",
-      "config": {
-        "usesNonExemptEncryption": false
-      }
-    },
-    "android": {
-      "package": "com.sarveshroshan.algotraderapp",
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
-      },
-      "predictiveBackGestureEnabled": false,
-      "versionCode": 1
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
-    "plugins": [
-      "expo-secure-store"
-    ]
-  }
+	"expo": {
+		"name": "AlgoTrader",
+		"slug": "AlgoTrader",
+		"version": "1.0.0",
+		"orientation": "portrait",
+		"icon": "./assets/icon.png",
+		"userInterfaceStyle": "automatic",
+		"ios": {
+			"supportsTablet": true,
+			"bundleIdentifier": "com.sarveshroshan.tradingdashboard",
+			"buildNumber": "1",
+			"config": {
+				"usesNonExemptEncryption": false
+			}
+		},
+		"android": {
+			"package": "com.sarveshroshan.tradingdashboard",
+			"adaptiveIcon": {
+				"backgroundColor": "#E6F4FE",
+				"foregroundImage": "./assets/android-icon-foreground.png",
+				"backgroundImage": "./assets/android-icon-background.png",
+				"monochromeImage": "./assets/android-icon-monochrome.png"
+			},
+			"predictiveBackGestureEnabled": false,
+			"versionCode": 1
+		},
+		"web": {
+			"favicon": "./assets/favicon.png"
+		},
+		"plugins": ["expo-secure-store"]
+	}
 }

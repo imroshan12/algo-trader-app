@@ -2,10 +2,14 @@
  * Read-only GitHub client.
  *
  * This app issues GET requests against the Contents API and nothing else. It
- * cannot commit, dispatch workflows, or mutate state, so the daily Actions cron
- * that maintains the portfolio is unaffected by anything here. Authenticated
- * reads are capped at 5,000/hour; a phone opened a few times a day uses three
- * per refresh.
+ * cannot commit, dispatch workflows, or mutate state, so the daily Actions
+ * cron that maintains the portfolio is unaffected by anything here.
+ * Authenticated reads are capped at 5,000/hour; a phone opened a few times a
+ * day uses three per refresh.
+ *
+ * Every request takes an AbortSignal and carries its own timeout. Mobile
+ * networks fail by hanging rather than by refusing, so a fetch with no
+ * deadline is a spinner that never stops.
  */
 
 import { decode as decodeBase64 } from 'js-base64';
@@ -13,6 +17,9 @@ import { decode as decodeBase64 } from 'js-base64';
 import { SleeveState } from '../types';
 
 const API_ROOT = 'https://api.github.com';
+
+/** Long enough for a cold cellular connection, short enough to not feel stuck. */
+const TIMEOUT_MS = 15_000;
 
 export interface RepoRef {
   owner: string;
@@ -35,24 +42,46 @@ export const DEFAULT_REPO: RepoRef = {
 };
 
 export class GitHubError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(
+    message: string,
+    readonly status?: number,
+    /** True when the failure is about the token itself, not this one file. */
+    readonly isAuth = false,
+  ) {
     super(message);
     this.name = 'GitHubError';
   }
 }
 
-function describeStatus(status: number, subject: string): string {
+/**
+ * An aborted request is not a failure — it means we moved on. Callers use
+ * this to drop the result silently instead of rendering an error the user
+ * caused by pulling to refresh twice.
+ */
+export function isAbortError(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { name?: string }).name === 'AbortError';
+}
+
+function describeStatus(status: number, subject: string): GitHubError {
   switch (status) {
     case 401:
-      return 'Token rejected. It may be expired, revoked, or mistyped.';
+      return new GitHubError(
+        'Token rejected. It may be expired, revoked, or mistyped.', status, true,
+      );
     case 403:
-      return 'Access denied. Check the token grants Contents: Read on this repository.';
+      return new GitHubError(
+        'Access denied. Check the token grants Contents: Read on this repository.',
+        status, true,
+      );
     case 404:
-      return `Not found: ${subject}. Either it has not been committed to this branch yet, or the token cannot see this repository.`;
+      return new GitHubError(
+        `Not found: ${subject}. Either it has not been committed to this branch yet, or the token cannot see this repository.`,
+        status,
+      );
     case 429:
-      return 'Rate limited by GitHub. Try again in a few minutes.';
+      return new GitHubError('Rate limited by GitHub. Try again in a few minutes.', status);
     default:
-      return `GitHub returned ${status} for ${subject}.`;
+      return new GitHubError(`GitHub returned ${status} for ${subject}.`, status);
   }
 }
 
@@ -69,16 +98,31 @@ async function request(
   url: string,
   accept: string,
   subject: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
+  // Chain the caller's signal to a timeout, so either can end the request.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort);
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
   let res: Response;
   try {
-    res = await fetch(url, { headers: headers(token, accept) });
-  } catch {
+    res = await fetch(url, { headers: headers(token, accept), signal: controller.signal });
+  } catch (e) {
+    // The caller cancelled: propagate as-is so it can be ignored.
+    if (signal?.aborted) throw e;
+    // We cancelled: the network never answered.
+    if (isAbortError(e)) {
+      throw new GitHubError('GitHub did not respond. Check your connection and try again.');
+    }
     throw new GitHubError('No network connection.');
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
   }
-  if (!res.ok) {
-    throw new GitHubError(describeStatus(res.status, subject), res.status);
-  }
+
+  if (!res.ok) throw describeStatus(res.status, subject);
   return res;
 }
 
@@ -114,9 +158,10 @@ export async function fetchSleeveState(
   token: string,
   path: string,
   repo: RepoRef = DEFAULT_REPO,
+  signal?: AbortSignal,
 ): Promise<SleeveState> {
   const url = `${API_ROOT}/repos/${repo.owner}/${repo.repo}/contents/${path}?ref=${repo.branch}`;
-  const res = await request(token, url, 'application/vnd.github.raw+json', path);
+  const res = await request(token, url, 'application/vnd.github.raw+json', path, signal);
   const body = await res.text();
 
   let parsed: unknown;
@@ -170,6 +215,7 @@ function assertSleeveState(v: unknown, path: string): asserts v is SleeveState {
 export async function verifyAccess(
   token: string,
   repo: RepoRef = DEFAULT_REPO,
+  signal?: AbortSignal,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     await request(
@@ -177,9 +223,11 @@ export async function verifyAccess(
       `${API_ROOT}/repos/${repo.owner}/${repo.repo}`,
       'application/vnd.github+json',
       `${repo.owner}/${repo.repo}`,
+      signal,
     );
     return { ok: true };
   } catch (e) {
+    if (isAbortError(e)) throw e;
     return {
       ok: false,
       message: e instanceof GitHubError ? e.message : 'Could not reach GitHub.',
@@ -192,17 +240,19 @@ export async function fetchLastCommit(
   token: string,
   path: string,
   repo: RepoRef = DEFAULT_REPO,
+  signal?: AbortSignal,
 ): Promise<string | null> {
   try {
     const url =
       `${API_ROOT}/repos/${repo.owner}/${repo.repo}/commits` +
       `?path=${encodeURIComponent(path)}&sha=${repo.branch}&per_page=1`;
-    const res = await request(token, url, 'application/vnd.github+json', path);
+    const res = await request(token, url, 'application/vnd.github+json', path, signal);
     const commits = (await res.json()) as Array<{
       commit?: { committer?: { date?: string } };
     }>;
     return commits[0]?.commit?.committer?.date ?? null;
-  } catch {
+  } catch (e) {
+    if (isAbortError(e)) throw e;
     // A missing timestamp is cosmetic — never fail the whole refresh over it.
     return null;
   }

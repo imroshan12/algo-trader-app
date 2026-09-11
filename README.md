@@ -78,7 +78,8 @@ needed.
     "RELIANCE.NS": {
       "ticker": "RELIANCE.NS", "quantity": 7, "entry_price": 1313.1,
       "entry_date": "2026-09-11", "invested": 9191.7,
-      "entry_costs": 11, "sector": "Energy"
+      "entry_costs": 11, "sector": "Energy",
+      "last_price": 1342.5, "last_price_date": "2026-09-12"   // optional
     }
   },
   "pending_buys": [                 // queued, fill at next session open
@@ -103,10 +104,11 @@ The full TypeScript definitions are in [`src/types.ts`](src/types.ts).
 The **last entry of `equity_curve` is the authoritative valuation.** The backing repo
 computes it against real closing prices; the app reads it rather than recomputing.
 
-This matters: `positions[].entry_price` is what was *paid*, not what a holding is
-*worth*. Deriving portfolio value from entry prices gives cost basis and misreports
-every open position. The holdings list is therefore labelled **"at cost"**, and the
-header states which session close the totals reflect.
+Per holding, the app uses **`last_price`** / **`last_price_date`** — the close each
+position was marked at in the same run. These are optional: a position without them is
+shown **"at cost"** with no P&L, rather than presenting entry price as though it were
+today's value. `entry_price` is what was *paid*; deriving value from it gives cost
+basis and misreports every open position.
 
 ---
 
@@ -125,9 +127,21 @@ npx expo run:android
 ```
 
 ```bash
-npm test                # 11 tests over the pure logic
+npm test                # unit tests over formatting, valuation, charts and the API client
 npm run typecheck
 ```
+
+### Sample data
+
+To work on the UI without a token or a network:
+
+```bash
+EXPO_PUBLIC_SAMPLE_DATA=1 npx expo start
+```
+
+This loads a generated portfolio from [`src/dev/sample.ts`](src/dev/sample.ts). It only
+takes effect in a development build — a release build ignores it — and every screen is
+labelled "Sample data" while it is on.
 
 ### If `pod install` fails
 
@@ -188,35 +202,53 @@ it leaks is that someone can read a paper-trading portfolio. Still worth the exp
 
 ## What it shows
 
-- **Combined total** across all sleeves, with return against deployed capital
-- **Per sleeve** — equity, cash, invested (mark-to-market), exits, realised P&L, costs,
-  days running
-- **A state chip** saying *why* a sleeve looks the way it does: holding positions,
-  orders queued, or deliberately in cash — so a zero reads as a decision rather than a
-  failure
-- **Holdings** at cost, with quantity, entry price and entry date
-- **Queued orders** waiting to fill at the next session open
-- **When the cron last ran**, from the state file's most recent commit
+**Portfolio**
+- **Combined total** across sleeves — tap it to switch between value, profit and return
+- **Equity chart** of profit and loss against deployed capital, one bar per session.
+  Drag across it to read any day; pick a range where there's enough history for one
+- **Today's change**, and a warning if the valuation is several days old — the usual
+  sign that the scheduled job has stopped running
+- **One card per sleeve** with its status, a sparkline, and how the money is split
+  between invested and cash
 
-Pull down to refresh. Amounts use Indian digit grouping (₹1,00,000), matching how they
-read on an NSE broker statement.
+**Sleeve detail** (tap a card)
+- **Holdings** with per-stock value and P&L at the last close, sortable by value, P&L or
+  name. Tap one for cost, stop level, distance to stop, sector and days held
+- **Queued orders**, with how far each stock is above its 200-day average and how much
+  cash they commit at the next open
+- **Trade history**, newest first, with net P&L on every exit
+- **How the sleeve works**, in plain English
+
+Pull down to refresh. The app also re-checks when you return to it after a minute or
+more away. Amounts use Indian digit grouping (₹1,00,000), as on an NSE broker statement.
+Light and dark mode follow the system, and animation respects Reduce Motion.
 
 ---
 
 ## Layout
 
 ```
-App.tsx                        Root — routes between setup and portfolio
+App.tsx                           Root — error boundary, routes setup ↔ portfolio
 src/
-  api/github.ts                Read-only Contents API client
-  storage/token.ts             Keychain-backed token storage
-  lib/format.ts                Rupee formatting, valuation, state derivation
-  lib/format.test.ts           Tests for the above
-  theme.ts                     Light/dark palettes
-  components/SleeveCard.tsx    One sleeve panel
-  screens/SetupScreen.tsx      First-run token entry
-  screens/PortfolioScreen.tsx  Main dashboard
-  types.ts                     State-file shapes and sleeve config
+  api/github.ts                   Read-only Contents API client (timeouts, cancellation)
+  hooks/usePortfolio.ts           Data layer: fetch, refresh, keep last-good data
+  hooks/useCountUp.ts             Animates a figure to its new value
+  hooks/useReducedMotion.ts       Follows the OS Reduce Motion setting
+  lib/format.ts                   Money, dates, valuation, holdings, staleness
+  lib/series.ts                   Equity curves → chart model, ranges, downsampling
+  lib/token.ts                    Recognises fine-grained vs classic tokens
+  storage/token.ts                Keychain-backed token storage
+  theme.ts                        Palettes, spacing, type scale, style factory
+  types.ts                        State-file shapes and sleeve config
+  components/ui.tsx               Chip, stat, buttons, segmented control, skeleton
+  components/EquityChart.tsx      Session bar chart with drag-to-scrub
+  components/SleeveCard.tsx       One sleeve, summarised
+  components/rows.tsx             Holding, queued-order and trade rows
+  components/ErrorBoundary.tsx    Recovers from a render crash
+  screens/SetupScreen.tsx         First-run token entry
+  screens/PortfolioScreen.tsx     Main screen
+  screens/SleeveDetailSheet.tsx   Per-sleeve sheet
+  dev/sample.ts                   Generated sample portfolio (development only)
 ```
 
 ## Licence
