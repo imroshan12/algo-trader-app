@@ -27,7 +27,7 @@
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.sarveshroshan.algotraderapp</string>
+				<string>com.sarveshroshan.tradingdashboard</string>
 			</array>
 		</dict>
 	</array>

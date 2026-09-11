@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.sarveshroshan.algotraderapp'
+    namespace 'com.sarveshroshan.tradingdashboard'
     defaultConfig {
-        applicationId 'com.sarveshroshan.algotraderapp'
+        applicationId 'com.sarveshroshan.tradingdashboard'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

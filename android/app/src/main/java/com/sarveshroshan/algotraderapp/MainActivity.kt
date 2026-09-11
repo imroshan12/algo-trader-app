@@ -1,4 +1,4 @@
-package com.sarveshroshan.algotraderapp
+package com.sarveshroshan.tradingdashboard
 
 import android.os.Build
 import android.os.Bundle
